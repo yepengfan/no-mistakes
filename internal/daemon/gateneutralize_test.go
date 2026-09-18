@@ -19,7 +19,7 @@ func fakeLookPath(bin string) (string, error) { return "/fake/bin/" + bin, nil }
 // opt-out (disable_project_settings=true), a verified harness passes the gate and
 // its pipeline agent reports neutralized.
 func TestNewPipelineAgent_OptOut_AdmitsVerifiedHarness(t *testing.T) {
-	for _, name := range []types.AgentName{types.AgentCodex, types.AgentClaude, types.AgentPi} {
+	for _, name := range []types.AgentName{types.AgentCodex, types.AgentClaude, types.AgentPi, types.AgentCursor} {
 		cfg := &config.Config{Agent: name, DisableProjectSettings: true}
 		ag, err := newPipelineAgent(context.Background(), cfg, t.TempDir(), fakeLookPath, runenv.Overlay{})
 		if err != nil {
