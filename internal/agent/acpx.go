@@ -25,12 +25,38 @@ type acpxAgent struct {
 	// mechanism that reaches the target agent; empty leaves the target on its
 	// configured default, exactly as before the common layer existed.
 	model string
+	// disableProjectSettings is the resolved, trusted-only opt-out. When true
+	// and target is cursor, buildArgs injects cursor-agent's
+	// --disable-project-configs into the raw ACP command acpx runs.
+	disableProjectSettings bool
 	subprocessContext
 }
 
 func (a *acpxAgent) Name() string { return "acp:" + a.target }
 
 func (a *acpxAgent) ReportsAgentAttempts() bool { return true }
+
+// NeutralizesGateInstructions reports whether the Cursor ACP target is launched
+// with the target repo's project agent-instruction files suppressed. It is
+// meaningful only under the opt-out (disableProjectSettings) and only for the
+// cursor target: other acpx targets are unchanged. cursor-agent reads
+// --disable-project-configs from argv (including before the acp subcommand) to
+// skip AGENTS.md, CLAUDE.md, .cursor/rules, and related project config. An
+// acp_registry_overrides.cursor pin of --disable-project-configs=false defeats
+// neutralization, so this returns false and the gate fails closed.
+func (a *acpxAgent) NeutralizesGateInstructions() bool {
+	if !a.disableProjectSettings || a.target != "cursor" || a.rawCommand == "" {
+		return false
+	}
+	enabled, disabled, pinned := cursorDisableProjectConfigsOverride(a.rawCommand)
+	if disabled {
+		return false
+	}
+	if pinned {
+		return enabled
+	}
+	return true // buildArgs injects --disable-project-configs
+}
 
 func (a *acpxAgent) Run(ctx context.Context, opts RunOpts) (*Result, error) {
 	return runWithRetry(ctx, a.Name(), opts, claudeMaxRetries, classifyTransient, nil, func() (*Result, error) {
@@ -112,8 +138,8 @@ func (a *acpxAgent) Close() error { return nil }
 
 func (a *acpxAgent) buildArgs(opts RunOpts) []string {
 	args := make([]string, 0, 12)
-	if a.rawCommand != "" {
-		args = append(args, "--agent", a.rawCommand)
+	if rawCommand := a.effectiveRawCommand(); rawCommand != "" {
+		args = append(args, "--agent", rawCommand)
 	}
 	if opts.CWD != "" {
 		args = append(args, "--cwd", opts.CWD)
@@ -130,11 +156,103 @@ func (a *acpxAgent) buildArgs(opts RunOpts) []string {
 	if a.model != "" {
 		args = append(args, "--model", a.model)
 	}
-	if a.rawCommand == "" {
+	if a.effectiveRawCommand() == "" {
 		args = append(args, a.target)
 	}
 	args = append(args, "exec", "--file", "-")
 	return args
+}
+
+func (a *acpxAgent) effectiveRawCommand() string {
+	if a.rawCommand == "" {
+		return ""
+	}
+	if !a.disableProjectSettings || a.target != "cursor" {
+		return a.rawCommand
+	}
+	return cursorEffectiveRawCommand(a.rawCommand)
+}
+
+const cursorDisableProjectConfigsFlag = "--disable-project-configs"
+
+func cursorDisableProjectConfigsOverride(rawCommand string) (enabled, disabled, pinned bool) {
+	for _, tok := range splitRawCommandTokens(rawCommand) {
+		switch tok {
+		case cursorDisableProjectConfigsFlag, cursorDisableProjectConfigsFlag + "=true":
+			return true, false, true
+		case cursorDisableProjectConfigsFlag + "=false":
+			return false, true, true
+		}
+	}
+	return false, false, false
+}
+
+func cursorEffectiveRawCommand(rawCommand string) string {
+	if _, _, pinned := cursorDisableProjectConfigsOverride(rawCommand); pinned {
+		return rawCommand
+	}
+	tokens := splitRawCommandTokens(rawCommand)
+	if len(tokens) == 0 {
+		return rawCommand
+	}
+	out := make([]string, 0, len(tokens)+1)
+	out = append(out, tokens[0], cursorDisableProjectConfigsFlag)
+	out = append(out, tokens[1:]...)
+	return joinRawCommandTokens(out)
+}
+
+// splitRawCommandTokens splits an acp_registry_overrides raw command into
+// argv-style tokens, honoring double quotes and backslash escapes the way a
+// POSIX shell roughly would.
+func splitRawCommandTokens(command string) []string {
+	var tokens []string
+	var current strings.Builder
+	inQuotes := false
+	escaped := false
+	flush := func() {
+		if current.Len() > 0 {
+			tokens = append(tokens, current.String())
+			current.Reset()
+		}
+	}
+	for i := 0; i < len(command); i++ {
+		ch := command[i]
+		switch {
+		case escaped:
+			current.WriteByte(ch)
+			escaped = false
+		case ch == '\\':
+			escaped = true
+		case ch == '"':
+			inQuotes = !inQuotes
+		case (ch == ' ' || ch == '\t') && !inQuotes:
+			flush()
+		default:
+			current.WriteByte(ch)
+		}
+	}
+	flush()
+	return tokens
+}
+
+func joinRawCommandTokens(tokens []string) string {
+	if len(tokens) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i, tok := range tokens {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		if strings.ContainsAny(tok, " \t\"") {
+			b.WriteByte('"')
+			b.WriteString(strings.ReplaceAll(tok, `"`, `\"`))
+			b.WriteByte('"')
+		} else {
+			b.WriteString(tok)
+		}
+	}
+	return b.String()
 }
 
 func acpxStdinError(err error) error {

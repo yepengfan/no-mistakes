@@ -194,8 +194,8 @@ func NeutralizesGateInstructions(a Agent) bool {
 // the target checkout does not neutralize that checkout's project
 // agent-instruction files. Callers must invoke it before launching any gate
 // agent so an unverified harness is refused with a clear error rather than run
-// unneutralized in the target checkout. Only codex, claude, and pi have a verified
-// neutralization knob today.
+// unneutralized in the target checkout. Only codex, claude, pi, and cursor have a
+// verified neutralization knob today.
 func EnsureGateNeutralized(a Agent) error {
 	if a == nil {
 		return fmt.Errorf("no gate agent configured")
@@ -205,8 +205,8 @@ func EnsureGateNeutralized(a Agent) error {
 	}
 	return fmt.Errorf("gate agent %q does not neutralize the target repository's project "+
 		"agent-instruction files (AGENTS.md/CLAUDE.md); refusing to launch it in the target "+
-		"checkout. Only codex, claude, and pi have a verified neutralization knob (and only when it "+
-		"is not overridden by agent_args_override); set 'agent' to codex, claude, or pi in "+
+		"checkout. Only codex, claude, pi, and cursor have a verified neutralization knob (and only when it "+
+		"is not overridden by agent_args_override or acp_registry_overrides); set 'agent' to codex, claude, pi, or cursor in "+
 		"~/.no-mistakes/config.yaml", a.Name())
 }
 
@@ -1302,7 +1302,14 @@ func NewWithOptions(name types.AgentName, bin string, extraArgs []string, opts O
 	}
 	if target, ok := types.ACPTargetFor(name); ok {
 		rawCommand := types.ACPRawCommand(target, opts.ACPRegistryOverrides)
-		return &acpxAgent{bin: bin, target: target, rawCommand: rawCommand, model: opts.Profile.Model, subprocessContext: newSubprocessContext(opts.Environment)}, nil
+		return &acpxAgent{
+			bin:                    bin,
+			target:                 target,
+			rawCommand:             rawCommand,
+			model:                  opts.Profile.Model,
+			disableProjectSettings: opts.DisableProjectSettings,
+			subprocessContext:      newSubprocessContext(opts.Environment),
+		}, nil
 	}
 	// Mapped flags follow the operator's raw agent_args_override flags, so they
 	// still precede no-mistakes' managed flags in every adapter's argv. A knob

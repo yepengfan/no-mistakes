@@ -19,12 +19,12 @@ func optOutAgent(t *testing.T, name types.AgentName, extraArgs []string) Agent {
 }
 
 // TestNeutralizesGateInstructions_OnlyVerifiedHarnessesUnderOptOut is the core
-// fail-closed contract: under the opt-out, only codex, claude, and pi (whose
-// suppression knobs are empirically verified) neutralize the target repo's
+// fail-closed contract: under the opt-out, only codex, claude, pi, and cursor
+// (whose suppression knobs are empirically verified) neutralize the target repo's
 // project agent settings/instructions; every other harness reports false and is
 // refused rather than launched with project instructions loaded.
 func TestNeutralizesGateInstructions_OnlyVerifiedHarnessesUnderOptOut(t *testing.T) {
-	for _, name := range []types.AgentName{types.AgentCodex, types.AgentClaude, types.AgentPi} {
+	for _, name := range []types.AgentName{types.AgentCodex, types.AgentClaude, types.AgentPi, types.AgentCursor} {
 		if !NeutralizesGateInstructions(optOutAgent(t, name, nil)) {
 			t.Errorf("%s must neutralize under the opt-out with its default knob", name)
 		}
@@ -76,6 +76,9 @@ func TestEnsureGateNeutralized_RefusesUnsupportedUnderOptOut(t *testing.T) {
 	}
 	if err := EnsureGateNeutralized(optOutAgent(t, types.AgentPi, nil)); err != nil {
 		t.Errorf("pi must pass the gate under opt-out: %v", err)
+	}
+	if err := EnsureGateNeutralized(optOutAgent(t, types.AgentCursor, nil)); err != nil {
+		t.Errorf("cursor must pass the gate under opt-out: %v", err)
 	}
 	if err := EnsureGateNeutralized(optOutAgent(t, types.AgentGrok, nil)); err == nil {
 		t.Error("grok must remain refused until project-setting isolation is empirically verified")
